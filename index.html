@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CANSLIM 분석기</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #f5f5f5; padding: 16px; }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; }
+  .search-box { display: flex; gap: 8px; margin-bottom: 24px; }
+  .search-box input {
+    flex: 1; padding: 12px 16px; border: 1px solid #ddd;
+    border-radius: 10px; font-size: 16px; outline: none;
+  }
+  .search-box input:focus { border-color: #7F77DD; }
+  .search-box button {
+    padding: 12px 20px; background: #7F77DD; color: white;
+    border: none; border-radius: 10px; font-size: 15px; cursor: pointer;
+  }
+  .card {
+    background: white; border-radius: 12px; padding: 20px;
+    margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #333; }
+  .chart-wrap { position: relative; height: 240px; }
+  .status { text-align: center; padding: 40px; color: #888; font-size: 15px; }
+  .news-item { font-size: 13px; color: #444; padding: 6px 0;
+    border-bottom: 1px solid #f0f0f0; }
+  @media (max-width: 600px) {
+    .chart-wrap { height: 200px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📊 CANSLIM 분석기</h1>
+
+  <div class="search-box">
+    <input type="text" id="stockInput" placeholder="종목명 입력 (예: 삼성전자)"
+           onkeydown="if(event.key==='Enter') analyze()">
+    <button onclick="analyze()">분석</button>
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<script>
+const SHEET_ID    = "1gaaD3Q-ohe_uCYB-k2ilSm6hiwbw8AuQI77t9MDc5p8";
+let GEMINI_KEY = localStorage.getItem('gemini_key') || '';
+
+if (!GEMINI_KEY) {
+  GEMINI_KEY = prompt('Gemini API 키를 입력하세요 (최초 1회만 입력하면 저장됩니다):');
+  if (GEMINI_KEY) {
+    localStorage.setItem('gemini_key', GEMINI_KEY);
+  }
+}
+
+let charts = {};
+
+async function analyze() {
+  const name = document.getElementById('stockInput').value.trim();
+  if (!name) return;
+
+  document.getElementById('result').innerHTML =
+    '<div class="status">⏳ 데이터 로딩 중...</div>';
+
+  try {
+    // 시트 메타데이터 조회 (시트명 목록 확보)
+    const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?key=${GEMINI_KEY}`;
+    const metaRes = await fetch(metaUrl);
+    const meta    = await metaRes.json();
+
+    const matchSheet = meta.sheets.find(s =>
+      s.properties.title.startsWith(name)
+    );
+
+    if (!matchSheet) {
+      document.getElementById('result').innerHTML =
+        `<div class="status">❌ '${name}' 데이터가 없습니다.<br>코랩에서 먼저 수집해주세요.</div>`;
+      return;
+    }
+
+    const sheetName = matchSheet.properties.title;
+
+    // gviz로 데이터 조회
+    const dataUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+    const res     = await fetch(dataUrl);
+    const text    = await res.text();
+    const json    = JSON.parse(text.substring(47).slice(0,-2));
+    const rows    = json.table.rows;
+
+    const data = parseSheetData(rows);
+    renderDashboard(name, data);
+
+  } catch(e) {
+    document.getElementById('result').innerHTML =
+      `<div class="status">❌ 오류: ${e.message}<br>코랩에서 수집 후 다시 시도해주세요.</div>`;
+  }
+}
+
+function parseSheetData(rows) {
+  let finData = [], news = [];
+  let section = '';
+
+  rows.forEach(row => {
+    const cells = row.c || [];
+    const vals  = cells.map(c => c ? (c.v ?? c.f ?? '') : '');
+    const first = String(vals[0] ?? '').trim();
+
+    if (first.includes('재무 데이터')) { section = 'fin-header'; return; }
+    if (first.includes('주가·시총'))  { section = 'price'; return; }
+    if (first.includes('최신 뉴스'))  { section = 'news'; return; }
+    if (first === '연도') { section = 'fin'; return; }
+    if (first === '' || first.startsWith('===')) return;
+
+    if (section === 'fin' && first && !isNaN(first)) {
+      finData.push(vals);
+    }
+    if (section === 'news' && first.startsWith('[')) {
+      news.push(first);
+    }
+  });
+
+  return { finData, news };
+}
+
+function renderDashboard(name, data) {
+  const fin = data.finData;
+
+  if (fin.length === 0) {
+    document.getElementById('result').innerHTML =
+      '<div class="status">❌ 재무 데이터가 비어있습니다.</div>';
+    return;
+  }
+
+  // 컬럼 인덱스 — 코랩 시트 구조와 정확히 일치
+  // [0]연도 [1]보고서 [2]매출액 [3]매출원가 [4]영업이익 [5]당기순이익
+  // [6]영업이익률 [7]EPS [8]EPS성장률 [9]영업현금흐름 [10]CAPEX [11]FCF
+  const reportShort = r => String(r).replace('사업보고서(연간)','연간')
+                                      .replace('분기보고서(3Q)','3Q')
+                                      .replace('반기보고서(2Q)','2Q')
+                                      .replace('분기보고서(1Q)','1Q');
+
+  const labels    = fin.map(r => `${r[0]} ${reportShort(r[1])}`);
+  const revenue   = fin.map(r => Number(r[2])/1e8 || 0);
+  const opProfit  = fin.map(r => Number(r[4])/1e8 || 0);
+  const netProfit = fin.map(r => Number(r[5])/1e8 || 0);
+  const opMargin  = fin.map(r => Number(r[6]) || 0);
+  const epsGrowth = fin.map(r => Number(r[8]) || 0);
+
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+
+  document.getElementById('result').innerHTML = `
+    <div class="card">
+      <h2>📈 매출액 · 영업이익 · 당기순이익 (억원)</h2>
+      <div class="chart-wrap"><canvas id="chart1"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>📊 영업이익률 · EPS 성장률 (%)</h2>
+      <div class="chart-wrap"><canvas id="chart2"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>🤖 CANSLIM 분석 (Gemini)</h2>
+      <div id="canslim-result"><div class="status">⏳ AI 분석 중...</div></div>
+    </div>
+    <div class="card">
+      <h2>📰 최신 뉴스</h2>
+      ${data.news.map(n => `<div class="news-item">${n}</div>`).join('') || '<div class="news-item">뉴스 없음</div>'}
+    </div>
+  `;
+
+  charts.c1 = new Chart(document.getElementById('chart1'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: '매출액', data: revenue,   backgroundColor: 'rgba(127,119,221,0.7)' },
+        { label: '영업이익', data: opProfit, backgroundColor: 'rgba(29,158,117,0.7)' },
+        { label: '순이익',   data: netProfit,backgroundColor: 'rgba(216,90,48,0.7)'  },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+      scales: { x: { ticks: { font: { size: 10 }, maxRotation: 45 } } }
+    }
+  });
+
+  charts.c2 = new Chart(document.getElementById('chart2'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '영업이익률(%)', data: opMargin,
+          borderColor: '#7F77DD', backgroundColor: 'rgba(127,119,221,0.1)',
+          tension: 0.3, fill: true, yAxisID: 'y'
+        },
+        {
+          label: 'EPS성장률(%)', data: epsGrowth,
+          borderColor: '#D85A30', backgroundColor: 'transparent',
+          tension: 0.3, borderDash: [5,3], yAxisID: 'y1'
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+      scales: {
+        y:  { position: 'left',  title: { display: true, text: '영업이익률(%)' } },
+        y1: { position: 'right', title: { display: true, text: 'EPS성장률(%)' },
+               grid: { drawOnChartArea: false } },
+        x:  { ticks: { font: { size: 10 }, maxRotation: 45 } }
+      }
+    }
+  });
+
+  runGeminiAnalysis(name, fin, data.news);
+}
+
+async function runGeminiAnalysis(name, fin, news) {
+  const latest = fin.slice(-4);
+  const finSummary = latest.map(r =>
+    `${r[0]}년 ${r[1]}: 매출 ${(Number(r[2])/1e8).toFixed(0)}억, ` +
+    `영업이익 ${(Number(r[4])/1e8).toFixed(0)}억, ` +
+    `영업이익률 ${r[6]}%, EPS ${r[7]}, EPS성장률 ${r[8]}%, FCF ${(Number(r[11])/1e8).toFixed(0)}억`
+  ).join('\n');
+
+  const prompt = `당신은 CANSLIM 투자 전략 전문가입니다.
+${name}의 데이터를 분석해 CANSLIM 7항목을 평가하세요.
+
+[재무 데이터 - 최근 4개 분기]
+${finSummary}
+
+[최신 뉴스]
+${news.slice(0,3).join('\n') || '뉴스 없음'}
+
+각 항목(C,A,N,S,L,I,M)별로 ✅/⚠️/❌ 판정과 1문장 근거를 주세요.
+마지막에 총점(7점 만점), 투자매력도(상/중/하), 한 줄 결론을 주세요.
+한국어로 간결하게 답변하세요.`;
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      }
+    );
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '분석 실패';
+
+    document.getElementById('canslim-result').innerHTML =
+      `<div style="white-space:pre-wrap;font-size:13px;line-height:1.7;color:#333">${text}</div>`;
+  } catch(e) {
+    document.getElementById('canslim-result').innerHTML =
+      `<div class="status">Gemini 분석 실패: ${e.message}</div>`;
+  }
+}
+
+window.analyze = analyze;
+</script>
+</body>
+</html>
