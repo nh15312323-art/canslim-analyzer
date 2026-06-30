@@ -69,29 +69,18 @@ async function analyze() {
     '<div class="status">⏳ 데이터 로딩 중...</div>';
 
   try {
-    // 시트 메타데이터 조회 (시트명 목록 확보)
-    const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?key=${GEMINI_KEY}`;
-    const metaRes = await fetch(metaUrl);
-    const meta    = await metaRes.json();
+    const dataUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+    const res     = await fetch(dataUrl);
+    const text    = await res.text();
 
-    const matchSheet = meta.sheets.find(s =>
-      s.properties.title.startsWith(name)
-    );
-
-    if (!matchSheet) {
+    if (!text.includes('table')) {
       document.getElementById('result').innerHTML =
         `<div class="status">❌ '${name}' 데이터가 없습니다.<br>코랩에서 먼저 수집해주세요.</div>`;
       return;
     }
 
-    const sheetName = matchSheet.properties.title;
-
-    // gviz로 데이터 조회
-    const dataUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
-    const res     = await fetch(dataUrl);
-    const text    = await res.text();
-    const json    = JSON.parse(text.substring(47).slice(0,-2));
-    const rows    = json.table.rows;
+    const json = JSON.parse(text.substring(47).slice(0,-2));
+    const rows = json.table.rows;
 
     const data = parseSheetData(rows);
     renderDashboard(name, data);
@@ -101,6 +90,8 @@ async function analyze() {
       `<div class="status">❌ 오류: ${e.message}<br>코랩에서 수집 후 다시 시도해주세요.</div>`;
   }
 }
+
+window.analyze = analyze;
 
 function parseSheetData(rows) {
   let finData = [], news = [];
