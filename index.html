@@ -8,9 +8,10 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, sans-serif; background: #f5f5f5; padding: 16px; }
-  .container { max-width: 900px; margin: 0 auto; }
+  .container { max-width: 1000px; margin: 0 auto; }
   h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; }
-  .search-box { display: flex; gap: 8px; margin-bottom: 24px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 28px 0 12px; color: #1a1a1a; }
+  .search-box { display: flex; gap: 8px; margin-bottom: 16px; }
   .search-box input {
     flex: 1; padding: 12px 16px; border: 1px solid #ddd;
     border-radius: 10px; font-size: 16px; outline: none;
@@ -20,17 +21,35 @@
     padding: 12px 20px; background: #7F77DD; color: white;
     border: none; border-radius: 10px; font-size: 15px; cursor: pointer;
   }
+  .screen-box {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px;
+  }
+  .screen-box input {
+    width: 110px; padding: 10px 12px; border: 1px solid #ddd;
+    border-radius: 8px; font-size: 14px;
+  }
+  .screen-box button {
+    padding: 10px 18px; background: #1D9E75; color: white;
+    border: none; border-radius: 8px; font-size: 14px; cursor: pointer;
+  }
   .card {
     background: white; border-radius: 12px; padding: 20px;
     margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
-  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #333; }
+  .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #333; }
   .chart-wrap { position: relative; height: 240px; }
   .status { text-align: center; padding: 40px; color: #888; font-size: 15px; }
-  .news-item { font-size: 13px; color: #444; padding: 6px 0;
-    border-bottom: 1px solid #f0f0f0; }
-  @media (max-width: 600px) {
+  .news-item { font-size: 13px; color: #444; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+  .rs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .rs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rs-table th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #ddd; color: #888; font-weight: 500; }
+  .rs-table td { padding: 6px 4px; border-bottom: 1px solid #f5f5f5; }
+  .up { color: #D85A30; }
+  .down { color: #185FA5; }
+  @media (max-width: 700px) {
     .chart-wrap { height: 200px; }
+    .rs-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -43,20 +62,26 @@
            onkeydown="if(event.key==='Enter') analyze()">
     <button onclick="analyze()">분석</button>
   </div>
-
   <div id="result"></div>
+
+  <h2>🔍 RS 스크리너 — 시가총액 범위 검색</h2>
+  <div class="screen-box">
+    <input type="number" id="capMin" placeholder="최소 (억원)" value="1000">
+    <span>~</span>
+    <input type="number" id="capMax" placeholder="최대 (억원)" value="10000">
+    <button onclick="runScreen()">스캔 시작</button>
+  </div>
+  <div id="screenResult"></div>
 </div>
 
 <script>
-const SHEET_ID    = "1gaaD3Q-ohe_uCYB-k2ilSm6hiwbw8AuQI77t9MDc5p8";
+const SHEET_ID  = "1gaaD3Q-ohe_uCYB-k2ilSm6hiwbw8AuQI77t9MDc5p8";
+const COLAB_URL = "https://dramatic-moments-societies-sleeve.trycloudflare.com";
 
 let GEMINI_KEY = localStorage.getItem('gemini_key') || '';
-
 if (!GEMINI_KEY) {
   GEMINI_KEY = prompt('Gemini API 키를 입력하세요 (최초 1회만 입력하면 저장됩니다):');
-  if (GEMINI_KEY) {
-    localStorage.setItem('gemini_key', GEMINI_KEY);
-  }
+  if (GEMINI_KEY) localStorage.setItem('gemini_key', GEMINI_KEY);
 }
 
 let charts = {};
@@ -65,34 +90,48 @@ async function analyze() {
   const name = document.getElementById('stockInput').value.trim();
   if (!name) return;
 
-  document.getElementById('result').innerHTML =
-    '<div class="status">⏳ 데이터 로딩 중...</div>';
+  document.getElementById('result').innerHTML = '<div class="status">⏳ 데이터 확인 중...</div>';
 
   try {
-    const dataUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
-    const res     = await fetch(dataUrl);
-    const text    = await res.text();
+    let dataUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+    let res  = await fetch(dataUrl);
+    let text = await res.text();
 
     if (!text.includes('table')) {
       document.getElementById('result').innerHTML =
-        `<div class="status">❌ '${name}' 데이터가 없습니다.<br>코랩에서 먼저 수집해주세요.</div>`;
-      return;
+        `<div class="status">⏳ '${name}' 데이터가 없습니다.<br>코랩 서버에 수집을 요청합니다... (1~3분 소요)</div>`;
+
+      const collectRes = await fetch(`${COLAB_URL}/collect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const collectData = await collectRes.json();
+
+      if (collectData.error) {
+        document.getElementById('result').innerHTML = `<div class="status">❌ ${collectData.error}</div>`;
+        return;
+      }
+
+      res  = await fetch(dataUrl);
+      text = await res.text();
+      if (!text.includes('table')) {
+        document.getElementById('result').innerHTML = `<div class="status">❌ 데이터를 불러올 수 없습니다.</div>`;
+        return;
+      }
     }
 
-    
     const jsonText = text.match(/setResponse\((.*)\);?\s*$/s)[1];
     const json     = JSON.parse(jsonText);
-    const rows = json.table.rows;
+    const rows     = json.table.rows;
 
-    const data = parseSheetData(rows);
-    renderDashboard(name, data);
+    renderDashboard(name, parseSheetData(rows));
 
   } catch(e) {
     document.getElementById('result').innerHTML =
-      `<div class="status">❌ 오류: ${e.message}<br>코랩에서 수집 후 다시 시도해주세요.</div>`;
+      `<div class="status">❌ 오류: ${e.message}<br>코랩 서버가 켜져 있는지 확인해주세요.</div>`;
   }
 }
-
 window.analyze = analyze;
 
 function parseSheetData(rows) {
@@ -110,12 +149,8 @@ function parseSheetData(rows) {
     if (first === '연도') { section = 'fin'; return; }
     if (first === '' || first.startsWith('===')) return;
 
-    if (section === 'fin' && first && !isNaN(first)) {
-      finData.push(vals);
-    }
-    if (section === 'news' && first.startsWith('[')) {
-      news.push(first);
-    }
+    if (section === 'fin' && first && !isNaN(first)) finData.push(vals);
+    if (section === 'news' && first.startsWith('[')) news.push(first);
   });
 
   return { finData, news };
@@ -123,16 +158,11 @@ function parseSheetData(rows) {
 
 function renderDashboard(name, data) {
   const fin = data.finData;
-
   if (fin.length === 0) {
-    document.getElementById('result').innerHTML =
-      '<div class="status">❌ 재무 데이터가 비어있습니다.</div>';
+    document.getElementById('result').innerHTML = '<div class="status">❌ 재무 데이터가 비어있습니다.</div>';
     return;
   }
 
-  // 컬럼 인덱스 — 코랩 시트 구조와 정확히 일치
-  // [0]연도 [1]보고서 [2]매출액 [3]매출원가 [4]영업이익 [5]당기순이익
-  // [6]영업이익률 [7]EPS [8]EPS성장률 [9]영업현금흐름 [10]CAPEX [11]FCF
   const reportShort = r => String(r).replace('사업보고서(연간)','연간')
                                       .replace('분기보고서(3Q)','3Q')
                                       .replace('반기보고서(2Q)','2Q')
@@ -149,66 +179,46 @@ function renderDashboard(name, data) {
   charts = {};
 
   document.getElementById('result').innerHTML = `
-    <div class="card">
-      <h2>📈 매출액 · 영업이익 · 당기순이익 (억원)</h2>
-      <div class="chart-wrap"><canvas id="chart1"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>📊 영업이익률 · EPS 성장률 (%)</h2>
-      <div class="chart-wrap"><canvas id="chart2"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>🤖 CANSLIM 분석 (Gemini)</h2>
-      <div id="canslim-result"><div class="status">⏳ AI 분석 중...</div></div>
-    </div>
-    <div class="card">
-      <h2>📰 최신 뉴스</h2>
+    <div class="card"><h3>📈 매출액 · 영업이익 · 당기순이익 (억원)</h3>
+      <div class="chart-wrap"><canvas id="chart1"></canvas></div></div>
+    <div class="card"><h3>📊 영업이익률 · EPS 성장률 (%)</h3>
+      <div class="chart-wrap"><canvas id="chart2"></canvas></div></div>
+    <div class="card"><h3>🤖 CANSLIM 분석 (Gemini)</h3>
+      <div id="canslim-result"><div class="status">⏳ AI 분석 중...</div></div></div>
+    <div class="card"><h3>📰 최신 뉴스</h3>
       ${data.news.map(n => `<div class="news-item">${n}</div>`).join('') || '<div class="news-item">뉴스 없음</div>'}
     </div>
   `;
 
   charts.c1 = new Chart(document.getElementById('chart1'), {
     type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: '매출액', data: revenue,   backgroundColor: 'rgba(127,119,221,0.7)' },
-        { label: '영업이익', data: opProfit, backgroundColor: 'rgba(29,158,117,0.7)' },
-        { label: '순이익',   data: netProfit,backgroundColor: 'rgba(216,90,48,0.7)'  },
-      ]
-    },
+    data: { labels, datasets: [
+      { label: '매출액', data: revenue,   backgroundColor: 'rgba(127,119,221,0.7)' },
+      { label: '영업이익', data: opProfit, backgroundColor: 'rgba(29,158,117,0.7)' },
+      { label: '순이익',   data: netProfit,backgroundColor: 'rgba(216,90,48,0.7)'  },
+    ]},
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
-      scales: { x: { ticks: { font: { size: 10 }, maxRotation: 45 } } }
+      scales: { x: { ticks: { font: { size: 9 }, maxRotation: 60 } } }
     }
   });
 
   charts.c2 = new Chart(document.getElementById('chart2'), {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: '영업이익률(%)', data: opMargin,
-          borderColor: '#7F77DD', backgroundColor: 'rgba(127,119,221,0.1)',
-          tension: 0.3, fill: true, yAxisID: 'y'
-        },
-        {
-          label: 'EPS성장률(%)', data: epsGrowth,
-          borderColor: '#D85A30', backgroundColor: 'transparent',
-          tension: 0.3, borderDash: [5,3], yAxisID: 'y1'
-        }
-      ]
-    },
+    data: { labels, datasets: [
+      { label: '영업이익률(%)', data: opMargin, borderColor: '#7F77DD',
+        backgroundColor: 'rgba(127,119,221,0.1)', tension: 0.3, fill: true, yAxisID: 'y' },
+      { label: 'EPS성장률(%)', data: epsGrowth, borderColor: '#D85A30',
+        backgroundColor: 'transparent', tension: 0.3, borderDash: [5,3], yAxisID: 'y1' }
+    ]},
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
       scales: {
         y:  { position: 'left',  title: { display: true, text: '영업이익률(%)' } },
-        y1: { position: 'right', title: { display: true, text: 'EPS성장률(%)' },
-               grid: { drawOnChartArea: false } },
-        x:  { ticks: { font: { size: 10 }, maxRotation: 45 } }
+        y1: { position: 'right', title: { display: true, text: 'EPS성장률(%)' }, grid: { drawOnChartArea: false } },
+        x:  { ticks: { font: { size: 9 }, maxRotation: 60 } }
       }
     }
   });
@@ -219,8 +229,7 @@ function renderDashboard(name, data) {
 async function runGeminiAnalysis(name, fin, news) {
   const latest = fin.slice(-4);
   const finSummary = latest.map(r =>
-    `${r[0]}년 ${r[1]}: 매출 ${(Number(r[2])/1e8).toFixed(0)}억, ` +
-    `영업이익 ${(Number(r[4])/1e8).toFixed(0)}억, ` +
+    `${r[0]}년 ${r[1]}: 매출 ${(Number(r[2])/1e8).toFixed(0)}억, 영업이익 ${(Number(r[4])/1e8).toFixed(0)}억, ` +
     `영업이익률 ${r[6]}%, EPS ${r[7]}, EPS성장률 ${r[8]}%, FCF ${(Number(r[11])/1e8).toFixed(0)}억`
   ).join('\n');
 
@@ -240,21 +249,76 @@ ${news.slice(0,3).join('\n') || '뉴스 없음'}
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      }
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
     );
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '분석 실패';
-
     document.getElementById('canslim-result').innerHTML =
       `<div style="white-space:pre-wrap;font-size:13px;line-height:1.7;color:#333">${text}</div>`;
   } catch(e) {
     document.getElementById('canslim-result').innerHTML =
       `<div class="status">Gemini 분석 실패: ${e.message}</div>`;
   }
+}
+
+async function runScreen() {
+  const capMin = document.getElementById('capMin').value;
+  const capMax = document.getElementById('capMax').value;
+
+  document.getElementById('screenResult').innerHTML =
+    '<div class="status">⏳ 전종목 스캔 중... (1~3분 소요)</div>';
+
+  try {
+    const res = await fetch(`${COLAB_URL}/screen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cap_min: capMin, cap_max: capMax })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      document.getElementById('screenResult').innerHTML = `<div class="status">❌ ${data.error}</div>`;
+      return;
+    }
+
+    renderScreenResult(data);
+
+  } catch(e) {
+    document.getElementById('screenResult').innerHTML =
+      `<div class="status">❌ 오류: ${e.message}<br>코랩 서버가 켜져 있는지 확인해주세요.</div>`;
+  }
+}
+window.runScreen = runScreen;
+
+function renderScreenResult(data) {
+  const periods = ['1일', '1주일', '1개월'];
+
+  const tables = periods.map(label => {
+    const list = data.data[label] || [];
+    const rowsHtml = list.map((r, i) => `
+      <tr>
+        <td>${i+1}</td>
+        <td>${r.종목명}</td>
+        <td>${r.시총_억.toLocaleString()}</td>
+        <td>${r.거래대금_억}</td>
+        <td>${r.RS}</td>
+        <td class="${r.당일등락률 >= 0 ? 'up' : 'down'}">${r.당일등락률 >= 0 ? '+' : ''}${r.당일등락률}%</td>
+      </tr>
+    `).join('');
+
+    return `
+      <div class="card">
+        <h3>${label} RS Top15</h3>
+        <table class="rs-table">
+          <thead><tr><th>#</th><th>종목명</th><th>시총(억)</th><th>거래대금(억)</th><th>RS</th><th>등락률</th></tr></thead>
+          <tbody>${rowsHtml || '<tr><td colspan="6">데이터 없음</td></tr>'}</tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('screenResult').innerHTML = `<div class="rs-grid">${tables}</div>`;
 }
 </script>
 </body>
