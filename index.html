@@ -66,7 +66,7 @@
 
   <h2>🔍 RS 스크리너 — 시가총액 범위 검색</h2>
   <div class="screen-box">
-    <input type="number" id="capMin" placeholder="최소 (억원)" value="1000">
+    <input type="number" id="capMin" placeholder="최소 (억원)" value="7000">
     <span>~</span>
     <input type="number" id="capMax" placeholder="최대 (억원)" value="10000">
     <button onclick="runScreen()">스캔 시작</button>
@@ -76,7 +76,7 @@
 
 <script>
 const SHEET_ID  = "1gaaD3Q-ohe_uCYB-k2ilSm6hiwbw8AuQI77t9MDc5p8";
-const COLAB_URL = "https://software-dropped-surgeon-ripe.trycloudflare.com";
+const COLAB_URL = "https://shadow-dimension-deutsche-sufficient.trycloudflare.com";
 
 let GEMINI_KEY = localStorage.getItem('gemini_key') || '';
 if (!GEMINI_KEY) {
