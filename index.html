@@ -79,7 +79,9 @@ async function analyze() {
       return;
     }
 
-    const json = JSON.parse(text.substring(47).slice(0,-2));
+    
+    const jsonText = text.match(/setResponse\((.*)\);?\s*$/s)[1];
+    const json     = JSON.parse(jsonText);
     const rows = json.table.rows;
 
     const data = parseSheetData(rows);
