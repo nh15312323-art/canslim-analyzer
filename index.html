@@ -86,7 +86,7 @@ if (!GEMINI_KEY) {
 
 let charts = {};
 
-async function analyze() {
+ async function analyze() {
   const name = document.getElementById('stockInput').value.trim();
   if (!name) return;
 
@@ -113,10 +113,27 @@ async function analyze() {
         return;
       }
 
-      res  = await fetch(dataUrl);
-      text = await res.text();
-      if (!text.includes('table')) {
-        document.getElementById('result').innerHTML = `<div class="status">❌ 데이터를 불러올 수 없습니다.</div>`;
+      document.getElementById('result').innerHTML = '<div class="status">⏳ 수집 완료, 데이터 불러오는 중...</div>';
+
+      let attempts = 0;
+      const maxAttempts = 5;
+      let found = false;
+
+      while (attempts < maxAttempts && !found) {
+        await new Promise(r => setTimeout(r, 2000));
+        res  = await fetch(dataUrl);
+        text = await res.text();
+        if (text.includes('table')) {
+          found = true;
+        }
+        attempts++;
+        document.getElementById('result').innerHTML =
+          `<div class="status">⏳ 데이터 불러오는 중... (${attempts}/${maxAttempts})</div>`;
+      }
+
+      if (!found) {
+        document.getElementById('result').innerHTML =
+          `<div class="status">❌ 수집은 됐지만 데이터를 불러올 수 없습니다. 잠시 후 새로고침 후 다시 시도해주세요.</div>`;
         return;
       }
     }
