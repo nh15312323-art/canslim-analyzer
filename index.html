@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CANSLIM 분석기</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #f5f5f5; padding: 16px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; }
+  h2 { font-size: 16px; font-weight: 600; margin: 28px 0 12px; color: #1a1a1a; }
+  .search-box { display: flex; gap: 8px; margin-bottom: 16px; }
+  .search-box input {
+    flex: 1; padding: 12px 16px; border: 1px solid #ddd;
+    border-radius: 10px; font-size: 16px; outline: none;
+  }
+  .search-box input:focus { border-color: #7F77DD; }
+  .search-box button {
+    padding: 12px 20px; background: #7F77DD; color: white;
+    border: none; border-radius: 10px; font-size: 15px; cursor: pointer;
+  }
+  .screen-box {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px;
+  }
+  .screen-box input {
+    width: 110px; padding: 10px 12px; border: 1px solid #ddd;
+    border-radius: 8px; font-size: 14px;
+  }
+  .screen-box button {
+    padding: 10px 18px; background: #1D9E75; color: white;
+    border: none; border-radius: 8px; font-size: 14px; cursor: pointer;
+  }
+  .card {
+    background: white; border-radius: 12px; padding: 20px;
+    margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #333; }
+  .chart-wrap { position: relative; height: 240px; }
+  .status { text-align: center; padding: 40px; color: #888; font-size: 15px; }
+  .news-item { font-size: 13px; color: #444; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+  .rs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .rs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rs-table th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #ddd; color: #888; font-weight: 500; }
+  .rs-table td { padding: 6px 4px; border-bottom: 1px solid #f5f5f5; }
+  .up { color: #D85A30; }
+  .down { color: #185FA5; }
+
+  /* ---- 탭 ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn {
+    flex: 1; padding: 12px; text-align: center; background: white;
+    border: 1px solid #ddd; border-radius: 10px; font-size: 14px; font-weight: 600;
+    color: #888; cursor: pointer;
+  }
+  .tab-btn.active { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ---- 시장 스크리닝 ---- */
+  .ms-header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
+  }
+  .ms-meta { font-size: 13px; color: #666; }
+  .ms-meta b { color: #1a1a1a; }
+  .ms-actions { display: flex; gap: 8px; }
+  .ms-actions button {
+    padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; cursor: pointer;
+  }
+  #msRefreshBtn { background: #7F77DD; color: white; }
+  #msBackfillBtn { background: #eee; color: #444; }
+  .ms-category { margin-bottom: 24px; }
+  .ms-category-title {
+    font-size: 15px; font-weight: 700; color: #1a1a1a; margin-bottom: 10px;
+    padding-bottom: 6px; border-bottom: 2px solid #1a1a1a;
+  }
+  .ms-table-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ms-card {
+    background: white; border-radius: 12px; padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .ms-card h4 { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 8px; }
+  .ms-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ms-table th { text-align: left; padding: 5px 4px; border-bottom: 1px solid #ddd; color: #888; font-weight: 500; }
+  .ms-table td { padding: 5px 4px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+  .ms-table td.name-cell:hover { color: #7F77DD; text-decoration: underline; }
+  .ms-empty { color: #aaa; font-size: 12px; padding: 8px 0; }
+
+  @media (max-width: 700px) {
+    .chart-wrap { height: 200px; }
+    .rs-grid { grid-template-columns: 1fr; }
+    .ms-table-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📊 CANSLIM 분석기</h1>
+
+  <div class="tabs">
+    <div class="tab-btn active" id="tabBtnStock" onclick="switchTab('stock')">🔎 개별 종목 분석</div>
+    <div class="tab-btn" id="tabBtnMarket" onclick="switchTab('market')">🎯 시장 스크리닝</div>
+  </div>
+
+  <!-- ===================== 탭 1: 개별 종목 분석 (기존 기능) ===================== -->
+  <div class="tab-panel active" id="panelStock">
+    <div class="search-box">
+      <input type="text" id="stockInput" placeholder="종목명 입력 (예: 삼성전자)"
+             onkeydown="if(event.key==='Enter') analyze()">
+      <button onclick="analyze()">분석</button>
+    </div>
+    <div id="result"></div>
+
+    <h2>🔍 빠른 스크리너 — 시가총액 범위 검색 (간이 RS)</h2>
+    <div class="screen-box">
+      <input type="number" id="capMin" placeholder="최소 (억원)" value="7000">
+      <span>~</span>
+      <input type="number" id="capMax" placeholder="최대 (억원)" value="10000">
+      <button onclick="runScreen()">스캔 시작</button>
+    </div>
+    <div id="screenResult"></div>
+  </div>
+
+  <!-- ===================== 탭 2: 시장 스크리닝 (marketscreen.txt 스펙) ===================== -->
+  <div class="tab-panel" id="panelMarket">
+    <div class="ms-header">
+      <div class="ms-meta" id="msMeta">기준일: -</div>
+      <div class="ms-actions">
+        <button id="msRefreshBtn" onclick="loadMarketScreening(false)">새로고침</button>
+        <button id="msBackfillBtn" onclick="runBackfill()">최초 히스토리 백필</button>
+      </div>
+    </div>
+    <div id="marketScreenResult"><div class="status">상단의 '새로고침'을 눌러 시장 스크리닝을 시작하세요.</div></div>
+  </div>
+
+</div>
+
+<script>
+const SHEET_ID  = "1gaaD3Q-ohe_uCYB-k2ilSm6hiwbw8AuQI77t9MDc5p8";
+const COLAB_URL = "https://breathing-known-fifty-dollars.trycloudflare.com";
+
+let GEMINI_KEY = localStorage.getItem('gemini_key') || '';
+if (!GEMINI_KEY) {
+  GEMINI_KEY = prompt('Gemini API 키를 입력하세요 (최초 1회만 입력하면 저장됩니다):');
+  if (GEMINI_KEY) localStorage.setItem('gemini_key', GEMINI_KEY);
+}
+
+let charts = {};
+
+/* ===================== 탭 전환 ===================== */
+function switchTab(tab) {
+  document.getElementById('tabBtnStock').classList.toggle('active', tab === 'stock');
+  document.getElementById('tabBtnMarket').classList.toggle('active', tab === 'market');
+  document.getElementById('panelStock').classList.toggle('active', tab === 'stock');
+  document.getElementById('panelMarket').classList.toggle('active', tab === 'market');
+}
+window.switchTab = switchTab;
+
+/* ===================== 개별 종목 분석 (기존 기능, 변경 없음) ===================== */
+ async function analyze() {
+  const name = document.getElementById('stockInput').value.trim();
+  if (!name) return;
+
+  document.getElementById('result').innerHTML = '<div class="status">⏳ 데이터 확인 중...</div>';
+
+  try {
+    let dataUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+    let res  = await fetch(dataUrl);
+    let text = await res.text();
+
+    if (!text.includes('table')) {
+      document.getElementById('result').innerHTML =
+        `<div class="status">⏳ '${name}' 데이터가 없습니다.<br>코랩 서버에 수집을 요청합니다... (최대 3분 소요)</div>`;
+
+      const collectRes = await fetch(`${COLAB_URL}/collect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const collectData = await collectRes.json();
+
+      if (collectData.error) {
+        document.getElementById('result').innerHTML = `<div class="status">❌ ${collectData.error}</div>`;
+        return;
+      }
+
+      let attempts = 0;
+      const maxAttempts = 40;
+      let found = false;
+
+      while (attempts < maxAttempts && !found) {
+        await new Promise(r => setTimeout(r, 5000));
+        res  = await fetch(dataUrl);
+        text = await res.text();
+        if (text.includes('table')) {
+          found = true;
+        }
+        attempts++;
+        const elapsed = attempts * 5;
+        document.getElementById('result').innerHTML =
+          `<div class="status">⏳ 데이터 수집 중... (${elapsed}초 경과, 최대 3분 소요될 수 있습니다)</div>`;
+      }
+
+      if (!found) {
+        document.getElementById('result').innerHTML =
+          `<div class="status">❌ 수집은 됐지만 데이터를 불러올 수 없습니다. 새로고침 후 다시 시도해주세요.</div>`;
+        return;
+      }
+    }
+
+    const jsonText = text.match(/setResponse\((.*)\);?\s*$/s)[1];
+    const json     = JSON.parse(jsonText);
+    const rows     = json.table.rows;
+
+    renderDashboard(name, parseSheetData(rows));
+
+  } catch(e) {
+    document.getElementById('result').innerHTML =
+      `<div class="status">❌ 오류: ${e.message}<br>코랩 서버가 켜져 있는지 확인해주세요.</div>`;
+  }
+}
+window.analyze = analyze;
+
+function parseSheetData(rows) {
+  let finData = [], news = [];
+  let section = '';
+
+  rows.forEach(row => {
+    const cells = row.c || [];
+    const vals  = cells.map(c => c ? (c.v ?? c.f ?? '') : '');
+    const first = String(vals[0] ?? '').trim();
+
+    if (first.includes('재무 데이터')) { section = 'fin-header'; return; }
+    if (first.includes('주가·시총'))  { section = 'price'; return; }
+    if (first.includes('최신 뉴스'))  { section = 'news'; return; }
+    if (first === '연도') { section = 'fin'; return; }
+    if (first === '' || first.startsWith('===')) return;
+
+    if (section === 'fin' && first && !isNaN(first)) finData.push(vals);
+    if (section === 'news' && first.startsWith('[')) news.push(first);
+  });
+
+  return { finData, news };
+}
+
+function renderDashboard(name, data) {
+  const fin = data.finData;
+  if (fin.length === 0) {
+    document.getElementById('result').innerHTML = '<div class="status">❌ 재무 데이터가 비어있습니다.</div>';
+    return;
+  }
+
+  const reportShort = r => String(r).replace('사업보고서(연간)','연간')
+                                      .replace('분기보고서(3Q)','3Q')
+                                      .replace('반기보고서(2Q)','2Q')
+                                      .replace('분기보고서(1Q)','1Q');
+
+  const labels    = fin.map(r => `${r[0]} ${reportShort(r[1])}`);
+  const revenue   = fin.map(r => Number(r[2])/1e8 || 0);
+  const opProfit  = fin.map(r => Number(r[4])/1e8 || 0);
+  const netProfit = fin.map(r => Number(r[5])/1e8 || 0);
+  const opMargin  = fin.map(r => Number(r[6]) || 0);
+  const epsGrowth = fin.map(r => Number(r[8]) || 0);
+
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+
+  document.getElementById('result').innerHTML = `
+    <div class="card"><h3>📈 매출액 · 영업이익 · 당기순이익 (억원)</h3>
+      <div class="chart-wrap"><canvas id="chart1"></canvas></div></div>
+    <div class="card"><h3>📊 영업이익률 · EPS 성장률 (%)</h3>
+      <div class="chart-wrap"><canvas id="chart2"></canvas></div></div>
+    <div class="card"><h3>🤖 CANSLIM 분석 (Gemini)</h3>
+      <div id="canslim-result"><div class="status">⏳ AI 분석 중...</div></div></div>
+    <div class="card"><h3>📰 최신 뉴스</h3>
+      ${data.news.map(n => `<div class="news-item">${n}</div>`).join('') || '<div class="news-item">뉴스 없음</div>'}
+    </div>
+  `;
+
+  charts.c1 = new Chart(document.getElementById('chart1'), {
+    type: 'bar',
+    data: { labels, datasets: [
+      { label: '매출액', data: revenue,   backgroundColor: 'rgba(127,119,221,0.7)' },
+      { label: '영업이익', data: opProfit, backgroundColor: 'rgba(29,158,117,0.7)' },
+      { label: '순이익',   data: netProfit,backgroundColor: 'rgba(216,90,48,0.7)'  },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+      scales: { x: { ticks: { font: { size: 9 }, maxRotation: 60 } } }
+    }
+  });
+
+  charts.c2 = new Chart(document.getElementById('chart2'), {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: '영업이익률(%)', data: opMargin, borderColor: '#7F77DD',
+        backgroundColor: 'rgba(127,119,221,0.1)', tension: 0.3, fill: true, yAxisID: 'y' },
+      { label: 'EPS성장률(%)', data: epsGrowth, borderColor: '#D85A30',
+        backgroundColor: 'transparent', tension: 0.3, borderDash: [5,3], yAxisID: 'y1' }
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+      scales: {
+        y:  { position: 'left',  title: { display: true, text: '영업이익률(%)' } },
+        y1: { position: 'right', title: { display: true, text: 'EPS성장률(%)' }, grid: { drawOnChartArea: false } },
+        x:  { ticks: { font: { size: 9 }, maxRotation: 60 } }
+      }
+    }
+  });
+
+  runGeminiAnalysis(name, fin, data.news);
+}
+
+async function runGeminiAnalysis(name, fin, news) {
+  const latest = fin.slice(-4);
+  const finSummary = latest.map(r =>
+    `${r[0]}년 ${r[1]}: 매출 ${(Number(r[2])/1e8).toFixed(0)}억, 영업이익 ${(Number(r[4])/1e8).toFixed(0)}억, ` +
+    `영업이익률 ${r[6]}%, EPS ${r[7]}, EPS성장률 ${r[8]}%, FCF ${(Number(r[11])/1e8).toFixed(0)}억`
+  ).join('\n');
+
+  const prompt = `당신은 CANSLIM 투자 전략 전문가입니다.
+${name}의 데이터를 분석해 CANSLIM 7항목을 평가하세요.
+
+[재무 데이터 - 최근 4개 분기]
+${finSummary}
+
+[최신 뉴스]
+${news.slice(0,3).join('\n') || '뉴스 없음'}
+
+각 항목(C,A,N,S,L,I,M)별로 ✅/⚠️/❌ 판정과 1문장 근거를 주세요.
+마지막에 총점(7점 만점), 투자매력도(상/중/하), 한 줄 결론을 주세요.
+한국어로 간결하게 답변하세요.`;
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
+    );
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '분석 실패';
+    document.getElementById('canslim-result').innerHTML =
+      `<div style="white-space:pre-wrap;font-size:13px;line-height:1.7;color:#333">${text}</div>`;
+  } catch(e) {
+    document.getElementById('canslim-result').innerHTML =
+      `<div class="status">Gemini 분석 실패: ${e.message}</div>`;
+  }
+}
+
+async function runScreen() {
+  const capMin = document.getElementById('capMin').value;
+  const capMax = document.getElementById('capMax').value;
+
+  document.getElementById('screenResult').innerHTML =
+    '<div class="status">⏳ 전종목 스캔 중... (1~3분 소요)</div>';
+
+  try {
+    const res = await fetch(`${COLAB_URL}/screen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cap_min: capMin, cap_max: capMax })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      document.getElementById('screenResult').innerHTML = `<div class="status">❌ ${data.error}</div>`;
+      return;
+    }
+
+    renderScreenResult(data);
+
+  } catch(e) {
+    document.getElementById('screenResult').innerHTML =
+      `<div class="status">❌ 오류: ${e.message}<br>코랩 서버가 켜져 있는지 확인해주세요.</div>`;
+  }
+}
+window.runScreen = runScreen;
+
+function renderScreenResult(data) {
+  const periods = ['1일', '1주일', '1개월'];
+
+  const tables = periods.map(label => {
+    const list = data.data[label] || [];
+    const rowsHtml = list.map((r, i) => `
+      <tr>
+        <td>${i+1}</td>
+        <td>${r.종목명}</td>
+        <td>${r.시총_억.toLocaleString()}</td>
+        <td>${r.거래대금_억}</td>
+        <td>${r.RS}</td>
+        <td class="${r.당일등락률 >= 0 ? 'up' : 'down'}">${r.당일등락률 >= 0 ? '+' : ''}${r.당일등락률}%</td>
+      </tr>
+    `).join('');
+
+    return `
+      <div class="card">
+        <h3>${label} RS Top15</h3>
+        <table class="rs-table">
+          <thead><tr><th>#</th><th>종목명</th><th>시총(억)</th><th>거래대금(억)</th><th>RS</th><th>등락률</th></tr></thead>
+          <tbody>${rowsHtml || '<tr><td colspan="6">데이터 없음</td></tr>'}</tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('screenResult').innerHTML = `<div class="rs-grid">${tables}</div>`;
+}
+
+/* ===================== 시장 스크리닝 (marketscreen.txt 스펙) ===================== */
+
+// 카테고리 구조 정의 — 스펙 21번 화면 구조
+const MS_CATEGORY_LAYOUT = [
+  {
+    title: '📈 Trading Activity',
+    tables: [
+      { key: '거래대금 Z-Score 10D', cols: [
+          { label: 'Z10', field: 'z10', fmt: 'num2' } ] },
+      { key: '거래대금 Z-Score 20D', cols: [
+          { label: 'Z20', field: 'z20', fmt: 'num2' } ] },
+    ]
+  },
+  {
+    title: '🚀 Momentum',
+    tables: [
+      { key: '1D Return',  cols: [{ label: '수익률', field: 'r1',  fmt: 'pct' }] },
+      { key: '5D Return',  cols: [{ label: '수익률', field: 'r5',  fmt: 'pct' }] },
+      { key: '10D Return', cols: [{ label: '수익률', field: 'r10', fmt: 'pct' }] },
+      { key: '20D Return', cols: [{ label: '수익률', field: 'r20', fmt: 'pct' }] },
+      { key: '60D Return', cols: [{ label: '수익률', field: 'r60', fmt: 'pct' }] },
+      { key: '120D Return',cols: [{ label: '수익률', field: 'r120',fmt: 'pct' }] },
+      { key: 'Weighted Momentum', cols: [{ label: 'W.모멘텀', field: 'weighted_momentum', fmt: 'pct' }] },
+    ]
+  },
+  {
+    title: '💪 Relative Strength (vs KOSPI)',
+    tables: [
+      { key: 'KOSPI RS 5D',   rsField: 'r5',   rsN: 5,   cols: [{ label: '초과수익률', field: 'rs5',   fmt: 'pct' }] },
+      { key: 'KOSPI RS 10D',  rsField: 'r10',  rsN: 10,  cols: [{ label: '초과수익률', field: 'rs10',  fmt: 'pct' }] },
+      { key: 'KOSPI RS 20D',  rsField: 'r20',  rsN: 20,  cols: [{ label: '초과수익률', field: 'rs20',  fmt: 'pct' }] },
+      { key: 'KOSPI RS 60D',  rsField: 'r60',  rsN: 60,  cols: [{ label: '초과수익률', field: 'rs60',  fmt: 'pct' }] },
+      { key: 'KOSPI RS 120D', rsField: 'r120', rsN: 120, cols: [{ label: '초과수익률', field: 'rs120', fmt: 'pct' }] },
+    ]
+  },
+  {
+    title: '🏔️ Price High (조건 충족 전체 종목)',
+    tables: [
+      { key: '52주 최고가', highField: 'h52w', cols: [] },
+      { key: '52주 최고가 근접(90%+)', highField: 'h52w', cols: [] },
+      { key: '3년 최고가', highField: 'h3y', cols: [] },
+      { key: '5년 최고가', highField: 'h5y', cols: [] },
+      { key: '10년 최고가', highField: 'h10y', cols: [] },
+    ]
+  },
+];
+
+function fmtVal(v, type) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '-';
+  if (type === 'pct')  return `${(v*100 >= 0 ? '+' : '')}${(v*100).toFixed(2)}%`;
+  if (type === 'num2') return v.toFixed(2);
+  return v;
+}
+
+async function loadMarketScreening(force) {
+  const box = document.getElementById('marketScreenResult');
+  box.innerHTML = '<div class="status">⏳ 시장 스크리닝 계산 중... (최초 실행 시 수 분 소요될 수 있습니다)</div>';
+
+  try {
+    const url = `${COLAB_URL}/marketscreen${force ? '?force=true' : ''}`;
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.error) {
+      box.innerHTML = `<div class="status">❌ ${data.error}</div>`;
+      return;
+    }
+
+    renderMarketScreening(data);
+
+  } catch(e) {
+    box.innerHTML =
+      `<div class="status">❌ 오류: ${e.message}<br>코랩 서버(/marketscreen)가 켜져 있는지 확인해주세요.</div>`;
+  }
+}
+window.loadMarketScreening = loadMarketScreening;
+
+async function runBackfill() {
+  if (!confirm('최초 히스토리 백필은 종목 수에 따라 수십 분~수 시간 걸릴 수 있습니다. 시작할까요?')) return;
+  const box = document.getElementById('marketScreenResult');
+  box.innerHTML = '<div class="status">⏳ 히스토리 백필 진행 중... (코랩 콘솔에서 진행률을 확인하세요)</div>';
+
+  try {
+    const res = await fetch(`${COLAB_URL}/marketscreen/backfill`, { method: 'POST' });
+    const data = await res.json();
+    if (data.error) {
+      box.innerHTML = `<div class="status">❌ ${data.error}</div>`;
+      return;
+    }
+    box.innerHTML = `<div class="status">✅ 백필 완료 (${data.universe_size}종목). '새로고침'을 눌러 스크리닝을 실행하세요.</div>`;
+  } catch(e) {
+    box.innerHTML = `<div class="status">❌ 오류: ${e.message}</div>`;
+  }
+}
+window.runBackfill = runBackfill;
+
+function renderMarketScreening(data) {
+  document.getElementById('msMeta').innerHTML =
+    `기준일: <b>${data.market_date}</b> · 유니버스 <b>${data.universe_size}</b>종목 ` +
+    (data.kospi_returns ? `· KOSPI 20D <b>${fmtVal((data.kospi_returns['20D']||0)/100,'pct')}</b>` : '');
+
+  const html = MS_CATEGORY_LAYOUT.map(cat => {
+    const cardsHtml = cat.tables.map(t => {
+      const rows = data.tables[t.key] || [];
+
+      let colsHtml, rowsHtml;
+
+      if (t.highField) {
+        // 52주/3년/5년/10년 최고가 테이블
+        colsHtml = `<th>#</th><th>종목</th><th>현재가</th><th>최고가</th><th>최고가대비</th><th>기록일</th>`;
+        rowsHtml = rows.map((r,i) => `
+          <tr>
+            <td>${i+1}</td>
+            <td class="name-cell" onclick="jumpToStock('${r.종목명}')">${r.종목명}</td>
+            <td>${Number(r.종가).toLocaleString()}</td>
+            <td>${Number(r[t.highField+'_high']).toLocaleString()}</td>
+            <td>${fmtVal(r[t.highField+'_ratio']-1,'pct')}</td>
+            <td>${r[t.highField+'_date'] || '-'}</td>
+          </tr>
+        `).join('');
+      } else {
+        const col = t.cols[0];
+        colsHtml = `<th>#</th><th>종목</th><th>거래대금(원)</th><th>${col.label}</th>`;
+        rowsHtml = rows.map((r,i) => `
+          <tr>
+            <td>${i+1}</td>
+            <td class="name-cell" onclick="jumpToStock('${r.종목명}')">${r.종목명}</td>
+            <td>${Number(r.거래대금).toLocaleString()}</td>
+            <td class="${r[col.field] >= 0 ? 'up':'down'}">${fmtVal(r[col.field], col.fmt)}</td>
+          </tr>
+        `).join('');
+      }
+
+      return `
+        <div class="ms-card">
+          <h4>${t.key} ${t.highField ? '' : 'Top20'}</h4>
+          <table class="ms-table">
+            <thead><tr>${colsHtml}</tr></thead>
+            <tbody>${rowsHtml || `<tr><td colspan="6"><div class="ms-empty">해당 없음</div></td></tr>`}</tbody>
+          </table>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="ms-category">
+        <div class="ms-category-title">${cat.title}</div>
+        <div class="ms-table-grid">${cardsHtml}</div>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('marketScreenResult').innerHTML = html;
+}
+
+// 시장 스크리닝 테이블에서 종목명을 클릭하면 개별 종목 분석 탭으로 이동해 바로 분석
+function jumpToStock(name) {
+  switchTab('stock');
+  document.getElementById('stockInput').value = name;
+  analyze();
+}
+window.jumpToStock = jumpToStock;
+</script>
+</body>
+</html>
